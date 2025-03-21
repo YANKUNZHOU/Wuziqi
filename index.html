@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>极速智能五子棋</title>
+    <style>
+        body { margin: 0; padding: 20px; background: #f0f3f4; }
+        .container { display: flex; gap: 40px; max-width: 1200px; margin: 0 auto; }
+        #board { border: 3px solid #2c3e50; border-radius: 10px; background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+        .controls { display: flex; flex-direction: column; gap: 20px; min-width: 260px; }
+        button { padding: 15px 30px; font-size: 16px; cursor: pointer; background: #3498db; color: white; border: none; border-radius: 8px; }
+        button:disabled { background: #bdc3c7; cursor: not-allowed; }
+        .status { padding: 18px; background: #ecf0f1; border-radius: 8px; font-size: 18px; color: #2c3e50; text-align: center; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <canvas id="board" width="600" height="600"></canvas>
+        <div class="controls">
+            <div class="status" id="status">点击开始游戏</div>
+            <button id="startBtn">开始游戏</button>
+            <button id="resetBtn" disabled>重新开始</button>
+        </div>
+    </div>
+
+<script>
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const resetBtn = document.getElementById('resetBtn');
+const status = document.getElementById('status');
+
+const BOARD_SIZE = 15;
+const CELL_SIZE = canvas.width / BOARD_SIZE;
+let board = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(0));
+let gameActive = false;
+let humanTurn = true;
+
+// 初始化棋盘
+function initBoard() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#bdc3c7';
+    ctx.lineWidth = 1.5;
+    
+    for (let i = 0; i < BOARD_SIZE; i++) {
+        ctx.beginPath();
+        ctx.moveTo(CELL_SIZE/2, i * CELL_SIZE + CELL_SIZE/2);
+        ctx.lineTo(canvas.width - CELL_SIZE/2, i * CELL_SIZE + CELL_SIZE/2);
+        ctx.stroke();
+        
+        ctx.beginPath();
+        ctx.moveTo(i * CELL_SIZE + CELL_SIZE/2, CELL_SIZE/2);
+        ctx.lineTo(i * CELL_SIZE + CELL_SIZE/2, canvas.height - CELL_SIZE/2);
+        ctx.stroke();
+    }
+}
+
+// 绘制棋子
+function drawPiece(x, y, isBlack) {
+    ctx.beginPath();
+    ctx.arc(
+        x * CELL_SIZE + CELL_SIZE/2,
+        y * CELL_SIZE + CELL_SIZE/2,
+        CELL_SIZE * 0.4,
+        0, 2 * Math.PI
+    );
+    ctx.fillStyle = isBlack ? '#2c3e50' : '#ecf0f1';
+    ctx.fill();
+}
+
+// 胜利检测
+function checkWin(x, y) {
+    const player = board[y][x];
+    const directions = [[1,0], [0,1], [1,1], [1,-1]];
+    
+    return directions.some(([dx, dy]) => {
+        let count = 1;
+        let i = x + dx, j = y + dy;
+        while (i >= 0 && i < BOARD_SIZE && j >= 0 && j < BOARD_SIZE && board[j][i] === player) {
+            count++;
+            i += dx;
+            j += dy;
+        }
+        
+        i = x - dx;
+        j = y - dy;
+        while (i >= 0 && i < BOARD_SIZE && j >= 0 && j < BOARD_SIZE && board[j][i] === player) {
+            count++;
+            i -= dx;
+            j -= dy;
+        }
+        
+        return count >= 5;
+    });
+}
+
+// 高效AI核心
+class FastAI {
+    constructor() {
+        this.priorityMap = this.createPriorityMap();
+    }
+
+    createPriorityMap() {
+        const map = [];
+        const center = BOARD_SIZE / 2;
+        for (let y = 0; y < BOARD_SIZE; y++) {
+            map[y] = [];
+            for (let x = 0; x < BOARD_SIZE; x++) {
+                map[y][x] = 10 - Math.sqrt((x - center)**2 + (y - center)**2);
+            }
+        }
+        return map;
+    }
+
+    getBestMove(board) {
+        // 第一步：检查立即获胜机会
+        const winMove = this.findWinningMove(board, 2);
+        if (winMove) return winMove;
+
+        // 第二步：阻止玩家获胜
+        const blockMove = this.findWinningMove(board, 1);
+        if (blockMove) return blockMove;
+
+        // 第三步：选择最优位置
+        return this.findBestPosition(board);
+    }
+
+    findWinningMove(board, player) {
+        for (let y = 0; y < BOARD_SIZE; y++) {
+            for (let x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] !== 0) continue;
+                
+                board[y][x] = player;
+                if (checkWin(x, y)) {
+                    board[y][x] = 0;
+                    return {x, y};
+                }
+                board[y][x] = 0;
+            }
+        }
+        return null;
+    }
+
+    findBestPosition(board) {
+        let maxScore = -Infinity;
+        let bestMove = {x: 7, y: 7};
+        
+        for (let y = 0; y < BOARD_SIZE; y++) {
+            for (let x = 0; x < BOARD_SIZE; x++) {
+                if (board[y][x] !== 0) continue;
+                
+                const score = this.evaluatePosition(board, x, y);
+                if (score > maxScore) {
+                    maxScore = score;
+                    bestMove = {x, y};
+                }
+            }
+        }
+        return bestMove;
+    }
+
+    evaluatePosition(board, x, y) {
+        let score = this.priorityMap[y][x];
+        
+        // 快速评估四个方向
+        const directions = [[1,0], [0,1], [1,1], [1,-1]];
+        directions.forEach(([dx, dy]) => {
+            score += this.evaluateLine(board, x, y, dx, dy, 2) * 1.5; // 进攻
+            score += this.evaluateLine(board, x, y, dx, dy, 1) * 2.0; // 防守
+        });
+        
+        return score;
+    }
+
+    evaluateLine(board, x, y, dx, dy, player) {
+        let score = 0;
+        let count = 0;
+        let empty = 0;
+        
+        for (let i = 1; i <= 4; i++) {
+            const tx = x + dx * i;
+            const ty = y + dy * i;
+            if (tx < 0 || tx >= BOARD_SIZE || ty < 0 || ty >= BOARD_SIZE) break;
+            if (board[ty][tx] === player) count++;
+            else if (board[ty][tx] === 0) empty++;
+            else break;
+        }
+        
+        for (let i = 1; i <= 4; i++) {
+            const tx = x - dx * i;
+            const ty = y - dy * i;
+            if (tx < 0 || tx >= BOARD_SIZE || ty < 0 || ty >= BOARD_SIZE) break;
+            if (board[ty][tx] === player) count++;
+            else if (board[ty][tx] === 0) empty++;
+            else break;
+        }
+        
+        if (count >= 4) return 10000;
+        if (count === 3 && empty >= 1) return 3000;
+        if (count === 2 && empty >= 2) return 500;
+        return 0;
+    }
+}
+
+const ai = new FastAI();
+
+// 游戏控制
+canvas.addEventListener('click', (e) => {
+    if (!gameActive || !humanTurn) return;
+    
+    const rect = canvas.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left) / CELL_SIZE);
+    const y = Math.floor((e.clientY - rect.top) / CELL_SIZE);
+    
+    if (x >= 0 && x < BOARD_SIZE && y >= 0 && y < BOARD_SIZE && board[y][x] === 0) {
+        // 玩家落子
+        board[y][x] = 1;
+        drawPiece(x, y, true);
+        
+        if (checkWin(x, y)) {
+            gameEnd('玩家获胜！');
+            return;
+        }
+        
+        humanTurn = false;
+        status.textContent = 'AI思考中...';
+        
+        // AI立即响应
+        setTimeout(() => {
+            const move = ai.getBestMove(board);
+            board[move.y][move.x] = 2;
+            drawPiece(move.x, move.y, false);
+            
+            if (checkWin(move.x, move.y)) {
+                gameEnd('AI获胜！');
+            } else {
+                humanTurn = true;
+                status.textContent = '轮到你了';
+            }
+        }, 100);
+    }
+});
+
+function gameEnd(message) {
+    gameActive = false;
+    status.textContent = message;
+    resetBtn.disabled = false;
+}
+
+startBtn.addEventListener('click', () => {
+    gameActive = true;
+    board = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(0));
+    initBoard();
+    startBtn.disabled = true;
+    resetBtn.disabled = false;
+    status.textContent = '游戏开始 - 你先手';
+    humanTurn = true;
+});
+
+resetBtn.addEventListener('click', () => {
+    gameActive = false;
+    board = Array(BOARD_SIZE).fill().map(() => Array(BOARD_SIZE).fill(0));
+    initBoard();
+    startBtn.disabled = false;
+    resetBtn.disabled = true;
+    status.textContent = '游戏已重置';
+});
+
+// 初始化游戏
+initBoard();
+</script>
+</body>
+</html>
